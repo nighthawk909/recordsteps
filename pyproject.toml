@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recordsteps"
+version = "0.1.0"
+description = "Record a workflow once and get a step-by-step guide (Phase 0 prototype)"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "nighthawk909" }]
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6-Essentials>=6.6",
+    "pywin32>=306",
+    "comtypes>=1.4",
+    "mss>=10",
+    "winrt-runtime>=2.0",
+    "winrt-Windows.Media.Ocr>=2.0",
+    "winrt-Windows.Graphics.Imaging>=2.0",
+    "winrt-Windows.Storage.Streams>=2.0",
+    "winrt-Windows.Foundation>=2.0",
+    "winrt-Windows.Foundation.Collections>=2.0",
+    "winrt-Windows.Globalization>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.14", "jsonschema>=4"]
+
+[project.gui-scripts]
+recordsteps = "recordsteps.app:main"
+
+[tool.setuptools.packages.find]
+include = ["recordsteps*"]
+
+[tool.setuptools.package-data]
+recordsteps = ["guide.schema.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["desktop: drives real Windows input, UI Automation and screen capture; run with -m desktop"]
+addopts = "-m 'not desktop'"
+
+[tool.coverage.run]
+source = ["recordsteps"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+    "S101",          # asserts are fine in tests
+    "S110",          # try/except/pass is deliberate around flaky Windows APIs; each is commented
+    "S606",          # os.startfile opens files this app wrote
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B", "E731"]

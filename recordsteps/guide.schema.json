@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nighthawk909/recordsteps/guide.schema.json",
+  "title": "Record Steps guide",
+  "description": "One recorded workflow: ordered steps, each with a screenshot, the clicked element and a generated title. Coordinates are physical pixels relative to the step's screenshot unless noted.",
+  "type": "object",
+  "required": ["schema", "id", "title", "created", "steps"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "created": { "type": "string", "description": "ISO 8601 local time" },
+    "recorder": { "type": "string" },
+    "platform": { "type": "string" },
+    "steps": { "type": "array", "items": { "$ref": "#/$defs/step" } }
+  },
+  "$defs": {
+    "rect": {
+      "type": "array", "items": { "type": "integer" }, "minItems": 4, "maxItems": 4,
+      "description": "[x, y, width, height]"
+    },
+    "pair": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+    "step": {
+      "type": "object",
+      "required": ["id", "action", "at", "app", "process", "window", "monitor", "dpi", "image", "imageSize",
+                   "click", "element", "title"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^step-[0-9]{3,6}$" },
+        "action": { "enum": ["click", "double_click", "right_click"] },
+        "at": { "type": "string" },
+        "app": { "type": "string", "description": "Friendly app name, e.g. Excel" },
+        "process": { "type": "string", "description": "Program file name, e.g. EXCEL.EXE" },
+        "window": { "type": "string", "description": "Window title; empty for private windows" },
+        "monitor": { "$ref": "#/$defs/rect", "description": "The captured monitor in virtual-desktop pixels" },
+        "dpi": { "type": "integer" },
+        "image": { "type": "string", "pattern": "^(images/step-[0-9]{3,6}[.]png)?$",
+                   "description": "images/<id>.png inside the bundle; empty when no screenshot was kept" },
+        "imageSize": { "$ref": "#/$defs/pair" },
+        "click": { "$ref": "#/$defs/pair" },
+        "element": {
+          "type": "object",
+          "required": ["name", "role", "source", "bbox"],
+          "properties": {
+            "name": { "type": "string" },
+            "role": { "type": "string", "description": "UI Automation control type, e.g. Button" },
+            "source": { "enum": ["uia", "ocr", "none"] },
+            "bbox": { "oneOf": [{ "$ref": "#/$defs/rect" }, { "type": "null" }] },
+            "isPassword": { "type": "boolean" }
+          }
+        },
+        "title": {
+          "type": "object",
+          "required": ["generated", "edited"],
+          "properties": {
+            "generated": { "type": "string", "description": "Markdown-lite: **bold** and backslash escapes only" },
+            "edited": { "type": ["string", "null"] }
+          }
+        },
+        "note": { "type": "string" },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "captureMs": { "type": "number" },
+            "uiaMs": { "type": "number" },
+            "ocrMs": { "type": "number" },
+            "totalMs": { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}
