@@ -101,6 +101,7 @@ def test_windows_deps_end_to_end_without_input(qapp):
         deps = WindowsDeps()
         try:
             monitor = deps.monitor_at(10, 10)
+            assert deps.frame_before(monitor, 0) is None and not deps.frame_buffer.running  # Recorder starts it
             return (deps.window_at(10, 10), monitor, deps.dpi_at(10, 10), deps.grab(monitor).isNull(),
                     deps.chain_at(10, 10), deps.app_name(r"C:\x\msedge.exe"))
         finally:
@@ -108,6 +109,54 @@ def test_windows_deps_end_to_end_without_input(qapp):
 
     hit, monitor, dpi, null_image, chain, name = in_thread(use)
     assert monitor.w > 0 and dpi >= 96 and not null_image and name == "Edge"
+
+
+def test_desktop_duplication_frames_arrive(qapp):
+    """The rolling frame buffer on the real screen: frames arrive, and a click stamped now gets one
+    for a monitor mss also reports, unless the display is asleep (then Desktop Duplication reports
+    nothing and the buffer rightly vouches for no frame). Reads the screen only; no input."""
+    import time
+
+    from recordsteps.win import dda
+    from recordsteps.win.screen import ScreenGrabber
+
+    def monitors():
+        grabber = ScreenGrabber()
+        try:
+            return grabber.monitors()
+        finally:
+            grabber.close()
+
+    known = in_thread(monitors)
+    clocks = dda.windows_clocks()
+    buffer = dda.new_frame_buffer()
+
+    def pick_now():
+        now = clocks.tick_ms() & 0xFFFFFFFF
+        return next((p for m in known if (p := buffer.frame_before(m, now)) is not None), None)
+
+    buffer.start()
+    try:
+        deadline = time.monotonic() + 15  # the first dxcam import takes about a second
+        while buffer.stats().frames == 0 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if buffer.stats().frames == 0 and buffer.stats().private_drops:
+            pytest.skip("a private-browsing window is on screen, so frames are dropped by design")
+        if buffer.stats().frames == 0:
+            pytest.skip("Desktop Duplication isn't available here (remote session or unsupported GPU)")
+        chosen, deadline = None, time.monotonic() + 2
+        while chosen is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+            chosen = pick_now()
+        assert buffer.stats().calibrations >= 1
+        if chosen is None:
+            assert buffer.stats().blind_polls > 0, "frames arrived and duplication was reporting, yet none was picked"
+            return
+        assert (chosen.image.width(), chosen.image.height()) in {(m.w, m.h) for m in known}
+        assert chosen.gap_ms <= 250 and chosen.age_ms >= 0
+    finally:
+        buffer.stop()
+        assert not buffer.running and pick_now() is None
 
 
 def test_windows_ocr_reads_rendered_text(qapp):
@@ -238,6 +287,26 @@ def test_private_window_check_looks_at_every_window_on_the_monitor(monkeypatch):
     assert not system.private_window_on(everything)
 
 
+def test_private_window_check_never_reads_our_own_window_titles(monkeypatch):
+    # within one process GetWindowText sends WM_GETTEXT to the window's thread; from the frame
+    # buffer's thread that would wait on a GUI thread that is busy stopping the buffer
+    from recordsteps.model import Rect
+    from recordsteps.win import system
+
+    own = system._kernel32.GetCurrentProcessId()
+    read = []
+
+    def ours(hwnd, pid):
+        pid._obj.value = own  # every window belongs to us
+        return 1
+
+    monkeypatch.setattr(system._user32, "GetWindowThreadProcessId", ours)
+    monkeypatch.setattr(system._user32, "GetWindowTextW", lambda *args: read.append(args) or 0)
+    monkeypatch.setattr(system, "is_private", lambda title: True)
+    assert not system.private_window_on(Rect(-100_000, -100_000, 200_000, 200_000))
+    assert read == []
+
+
 def test_uia_prewarm_runs_on_a_side_thread():
     from recordsteps.win.uia import prewarm
 
@@ -261,6 +330,31 @@ def test_windows_deps_releases_the_screen_if_ui_automation_fails(monkeypatch):
     with pytest.raises(OSError):
         deps_module.WindowsDeps()
     assert closed == [True]
+
+
+def test_windows_deps_close_releases_everything_even_if_the_frame_buffer_fails(monkeypatch):
+    from recordsteps.win import deps as deps_module
+
+    closed = []
+
+    class Closes:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            closed.append(self.name)
+
+    class StuckBuffer:
+        def stop(self):
+            raise RuntimeError("thread stuck")
+
+    monkeypatch.setattr(deps_module, "ScreenGrabber", lambda: Closes("screen"))
+    monkeypatch.setattr(deps_module, "UiaClient", lambda: Closes("uia"))
+    monkeypatch.setattr(deps_module, "new_frame_buffer", StuckBuffer)
+    deps = deps_module.WindowsDeps()
+    with pytest.raises(RuntimeError):
+        deps.close()
+    assert closed == ["screen", "uia"]
 
 
 def test_log_file_lives_in_local_app_data(tmp_path, monkeypatch):

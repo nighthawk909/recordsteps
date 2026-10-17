@@ -20,6 +20,7 @@ from PySide6.QtGui import QImage
 from . import bundle
 from .apps import is_private, is_remote
 from .clicks import RawClick, is_double
+from .frames import Pick
 from .geometry import relative_point, useful_bbox
 from .model import (
     PASSWORD_NOTE,
@@ -58,6 +59,7 @@ class Deps(Protocol):
     def ocr_words(self, image: QImage) -> tuple[Word, ...]: ...
     def app_name(self, process_path: str) -> str: ...
     def private_window_on(self, monitor: Rect) -> bool: ...
+    def frame_before(self, monitor: Rect, t_ms: int) -> Pick | None: ...
 
 
 def _now() -> str:
@@ -87,6 +89,26 @@ def _read_near(image: QImage, click: tuple[int, int], deps: Deps) -> tuple[str, 
     return (hit.text, Rect(hit.x + x0, hit.y + y0, hit.w, hit.h)) if hit else None
 
 
+def _screenshot(click: RawClick, monitor: Rect, deps: Deps, step_id: str) -> QImage:
+    """The newest buffered frame from before the click; failing that, a screenshot taken now,
+    which can already show the app's reaction to the mouse-down."""
+    try:
+        chosen = deps.frame_before(monitor, click.t_ms)
+    except Exception as exc:  # the buffer is an improvement, not a requirement
+        log.warning("%s: frame buffer failed: %s", step_id, exc)
+        chosen = None
+    if chosen is not None and (chosen.image.isNull() or (chosen.image.width(), chosen.image.height()) != (monitor.w,
+                                                                                                      monitor.h)):
+        log.warning("%s: buffered frame unusable (%sx%s)", step_id, chosen.image.width(), chosen.image.height())
+        chosen = None
+    if chosen is None:
+        log.info("%s: no frame from before the click; screenshot taken after it", step_id)
+        return deps.grab(monitor)
+    log.info("%s: frame from before the click: content %.0f ms old, last confirmed %.0f ms before the click",
+             step_id, chosen.age_ms, chosen.gap_ms)
+    return chosen.image
+
+
 def capture_step(click: RawClick, hit: WindowHit, step_id: str, deps: Deps, *, now: str,
                  clock: Callable[[], float] = time.perf_counter) -> tuple[Step, QImage | None]:
     start = clock()
@@ -102,7 +124,7 @@ def capture_step(click: RawClick, hit: WindowHit, step_id: str, deps: Deps, *, n
 
     note = PRIVATE_ON_SCREEN_NOTE if deps.private_window_on(monitor) else ""
     t = clock()
-    image = None if note else deps.grab(monitor)
+    image = None if note else _screenshot(click, monitor, deps, step_id)
     capture_ms = _ms(t, clock)
 
     found, uia_ms = Resolved(), 0.0

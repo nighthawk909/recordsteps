@@ -1,11 +1,15 @@
+import itertools
+import logging
+
 import pytest
 from PySide6.QtGui import QColor, QImage
 
 from recordsteps import bundle
 from recordsteps.clicks import RawClick
+from recordsteps.frames import Pick
 from recordsteps.model import PRIVATE_NOTE, Guide, Rect
 from recordsteps.ocr_target import Word
-from recordsteps.pipeline import Session, WindowHit
+from recordsteps.pipeline import Session, WindowHit, capture_step
 from recordsteps.targets import ElementInfo
 
 OWN_PID = 4242
@@ -13,14 +17,16 @@ MON = Rect(0, 0, 1920, 1080)
 
 
 class FakeDeps:
-    def __init__(self, qapp, *, hit=None, chain=(), words=(), monitor=MON, chain_error=None, ocr_error=None):
+    def __init__(self, qapp, *, hit=None, chain=(), words=(), monitor=MON, chain_error=None, ocr_error=None,
+                 buffered=None):
         self.hit = hit or WindowHit(pid=100, title="Q3 forecast.xlsx - Excel", process_path=r"C:\Office\EXCEL.EXE")
         self.chain = chain
         self.words = words
         self.monitor = monitor
         self.chain_error = chain_error
         self.ocr_error = ocr_error
-        self.calls = {"grab": 0, "chain": 0, "ocr": 0}
+        self.buffered = buffered  # a Pick from the frame buffer, or an exception to raise
+        self.calls = {"grab": 0, "chain": 0, "ocr": 0, "frame_before": []}
 
     def window_at(self, x, y):
         return self.hit
@@ -36,6 +42,12 @@ class FakeDeps:
         img = QImage(monitor.w, monitor.h, QImage.Format_RGB32)
         img.fill(QColor("#FAFAFA"))
         return img
+
+    def frame_before(self, monitor, t_ms):
+        self.calls["frame_before"].append((monitor, t_ms))
+        if isinstance(self.buffered, Exception):
+            raise self.buffered
+        return self.buffered
 
     def chain_at(self, x, y):
         self.calls["chain"] += 1
@@ -194,3 +206,71 @@ def test_steps_are_numbered_in_order(qapp, tmp_path, n):
         session.handle(click(t=1000 + i * 2000))
     assert [s.id for s in session.guide.steps] == ["step-001", "step-002", "step-003"]
     assert [s.title for s in session.guide.steps] == ["Click **Save** in Excel", "Click **Save**", "Click **Save**"]
+
+
+# ---------------------------------------------------------------- frames from before the click
+
+
+def before_click_frame(color="#203040", age_ms=420.0, gap_ms=35.0):
+    img = QImage(MON.w, MON.h, QImage.Format_RGB32)
+    img.fill(QColor(color))
+    return Pick(image=img, age_ms=age_ms, gap_ms=gap_ms)
+
+
+def test_a_buffered_frame_from_before_the_click_is_the_screenshot(qapp, tmp_path, caplog):
+    deps = FakeDeps(qapp, chain=save_button(), buffered=before_click_frame())
+    session, root = new_session(deps, tmp_path)
+    readings = itertools.count(0.0, 0.0001)  # each clock reading 0.1 ms after the last
+    with caplog.at_level(logging.INFO, logger="recordsteps.pipeline"):
+        step, image = capture_step(click(t=777), deps.hit, "step-001", deps, now="2026-10-17T09:30:00",
+                                   clock=lambda: next(readings))
+    assert deps.calls["grab"] == 0 and deps.calls["frame_before"] == [(MON, 777)]
+    assert image.pixelColor(5, 5).name() == "#203040"
+    assert step.timing.capture_ms == 0.1  # one clock reading: nothing was grabbed
+    assert "420 ms" in caplog.text and "35 ms" in caplog.text
+    session.handle(click(t=5000))
+    assert QImage(str(root / "images" / "step-001.png")).pixelColor(5, 5).name() == "#203040"
+
+
+def test_without_a_buffered_frame_the_screen_is_grabbed_after_the_click(qapp, tmp_path, caplog):
+    deps = FakeDeps(qapp, chain=save_button())
+    session, _ = new_session(deps, tmp_path)
+    with caplog.at_level(logging.INFO, logger="recordsteps.pipeline"):
+        session.handle(click())
+    assert deps.calls["grab"] == 1 and len(deps.calls["frame_before"]) == 1
+    assert "after it" in caplog.text
+
+
+def test_a_failing_frame_buffer_falls_back_to_a_screenshot(qapp, tmp_path):
+    deps = FakeDeps(qapp, chain=save_button(), buffered=RuntimeError("buffer broke"))
+    session, _ = new_session(deps, tmp_path)
+    step = session.handle(click()).steps[0]
+    assert deps.calls["grab"] == 1 and step.image == "images/step-001.png"
+
+
+def test_buffered_frames_are_never_asked_for_when_a_private_window_is_on_screen(qapp, tmp_path):
+    class Watched(FakeDeps):
+        def private_window_on(self, monitor):
+            return True
+
+    deps = Watched(qapp, chain=save_button(), buffered=before_click_frame())
+    session, _ = new_session(deps, tmp_path)
+    step = session.handle(click()).steps[0]
+    assert step.image == "" and deps.calls["frame_before"] == [] and deps.calls["grab"] == 0
+
+
+def test_a_buffered_frame_of_a_password_field_is_not_saved(qapp, tmp_path):
+    chain = (ElementInfo("Password", "Edit", Rect(10, 10, 200, 24), is_password=True),)
+    deps = FakeDeps(qapp, chain=chain, buffered=before_click_frame())
+    session, root = new_session(deps, tmp_path)
+    step = session.handle(click(x=20, y=20)).steps[0]
+    assert step.image == "" and not list((root / "images").iterdir())
+
+
+@pytest.mark.parametrize("image", [QImage(), QImage(640, 480, QImage.Format_RGB32)])
+def test_an_unusable_buffered_frame_falls_back_to_a_screenshot(qapp, tmp_path, image):
+    deps = FakeDeps(qapp, chain=save_button(), buffered=Pick(image=image, age_ms=100.0, gap_ms=0.0))
+    session, root = new_session(deps, tmp_path)
+    step = session.handle(click()).steps[0]
+    assert deps.calls["grab"] == 1
+    assert QImage(str(root / step.image)).size().width() == MON.w

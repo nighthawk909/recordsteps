@@ -15,6 +15,7 @@ dependencies = [
     "pywin32>=306",
     "comtypes>=1.4",
     "mss>=10",
+    "dxcam>=0.3,<0.4",  # Desktop Duplication; we use its dxcam.core classes, so stay on one minor version
     "winrt-runtime>=2.0",
     "winrt-Windows.Media.Ocr>=2.0",
     "winrt-Windows.Graphics.Imaging>=2.0",

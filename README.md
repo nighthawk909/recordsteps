@@ -22,7 +22,7 @@ apps?** It is Windows-only and deliberately small.
 
 | Promise | How the code keeps it |
 |---|---|
-| Records only while the pill is visible | The mouse listener exists only between Record/Resume and Pause/Stop (`recorder.py`). Outside a recording the app listens to nothing. |
+| Records only while the pill is visible | The mouse listener and the screen-frame buffer exist only between Record/Resume and Pause/Stop (`recorder.py`). Outside a recording the app listens to and watches nothing; Pause and Stop drop the buffered frames, which are never written to disk. |
 | Never records keystrokes | There is no keyboard listener at all. Only left/right button presses are read (`win/rawinput.py`). |
 | Never reads what's typed in a field | Text boxes, combo boxes and documents are never OCR'd; a click there is named from UI Automation or not at all. |
 | No screenshots of password fields | If UI Automation reports a password field anywhere under the pointer, the step keeps its title but no screenshot. |
@@ -71,7 +71,7 @@ recordings.
 ```
 Raw Input thread ──clicks──▶ queue ──▶ capture worker ──▶ guide.json + images/
   (button presses only)                 1. which window? (skip ours, skip private)
-                                        2. screenshot the monitor (mss)
+                                        2. the frame from just before the click (Desktop Duplication buffer; mss fallback)
                                         3. what was clicked? (UI Automation, MTA thread)
                                         4. no name? read the screen around it (Windows OCR)
                                         5. title it, save atomically
@@ -153,10 +153,46 @@ From the first runs on a 3440×1440 monitor:
 
 - UI Automation named every control in the test window correctly, and named items in the
   Claude desktop app's sidebar (Electron).
-- **Screenshots take 115–140 ms** with GDI on that monitor. The click arrives on mouse-down,
-  so a fast app can react before the screenshot lands and show the *after* state. Next fix:
-  keep a rolling frame buffer (DXGI Desktop Duplication) and save the frame from just before
-  the click.
+- **Screenshots took 115–140 ms** with GDI on that monitor. The click arrives on mouse-down,
+  so a fast app could react before the screenshot landed and show the *after* state. Fixed with
+  a rolling frame buffer (`frames.py`, `framebuffer.py`, `win/dda.py`). While recording, DXGI
+  Desktop Duplication (through dxcam, MIT) is polled about 10 times a second. Desktop
+  Duplication only hands over a frame when the screen changed, stamped with the time of that
+  change. A step uses the newest frame whose content predates the click by at least 20 ms.
+  Click and frame times are put on one clock by lining QueryPerformanceCounter up with
+  GetTickCount64, and the 20 ms covers what that can get wrong. The log records each frame's
+  age.
+  - **Fallback.** With no frame from before the click, the step falls back to a GDI screenshot
+    taken after the click. That happens when the buffer isn't running, the click is over a
+    second old, or capture stalled.
+  - **Still screens.** On a screen that never changes, Desktop Duplication may hand over
+    nothing at all. A monitor without frames then gets one GDI snapshot, stamped when the
+    snapshot finished.
+  - **Display asleep or off.** Desktop Duplication then reports nothing, not even pointer
+    moves, while GDI screenshots still work. Seen on this PC with the monitor asleep: the
+    desktop end-to-end test's clicks changed the test window, but nothing was reported. So
+    "nothing changed" is only trusted from a duplication that has reported something.
+    Frames stop being vouched for when the pointer keeps moving on a monitor without a
+    report, and those steps use the screenshot taken after the click.
+  - **CPU.** 7.6% of one core while the screen changed on every poll (the worst case for an
+    idle recording); 1.5% on a still screen. It started at 20%: reusing frame memory and
+    letting the GPU copy finish before mapping removed most of it.
+  - **Speed.** Getting a step's frame takes **4–6.5 ms**, a copy of the frame (`capture_ms`).
+  - **Freshness.** For a click handled right away, the chosen frame was last confirmed current a
+    median **50–65 ms** before the click (max 120 ms; measured with simulated clicks, no input).
+  - **Memory.** About 20 MB per frame. A still screen keeps one or two frames. A constantly
+    changing screen keeps up to 12 per monitor (about 240 MB) for the last second.
+  - **Kept out of frames.** The pill and click flash (`WDA_EXCLUDEFROMCAPTURE`) are absent from
+    duplicated frames, checked by reading an excluded and a normal window out of a frame.
+    Frames stay in memory only, and Pause and Stop drop everything. While a private window is
+    visible on a monitor, that monitor's frames are dropped. Frames taken up to a second after
+    one was last seen are dropped too, so one captured just before it closed isn't kept. The
+    private-window scan skips Record Steps' own windows, whose titles can't safely be read from
+    another thread.
+  - **First second.** The first recording in a session imports dxcam (about 1 s), and Resume
+    reopens capture. Clicks in those moments use the fallback. A monitor that Desktop
+    Duplication can't open (rotated, or held by another capture app) uses the fallback for the
+    whole recording.
 - A click on a title bar has no useful name; OCR found nothing there and cost 0.4 s. The
   title falls back to "Click in **window title**".
 
@@ -179,8 +215,9 @@ Known limits:
 python -m pytest
 ```
 
-275 tests, 96% line coverage. They include real Windows checks that need no input: screen
-capture, UI Automation, Windows OCR, the private-window scan, and raw-input parsing.
+347 tests, 97% line coverage. They include real Windows checks that need no input: screen
+capture (GDI and Desktop Duplication), UI Automation, Windows OCR, the private-window scan, and
+raw-input parsing.
 
 ```bash
 QT_QPA_PLATFORM=windows python -m pytest -m desktop

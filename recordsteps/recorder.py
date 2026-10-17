@@ -1,5 +1,6 @@
 """A recording session with its threads: the click listener feeds a queue, one worker turns
-clicks into steps. The listener only exists between start/resume and pause/stop."""
+clicks into steps. The listener, and the deps' rolling frame buffer if they have one, only run
+between start/resume and pause/stop."""
 from __future__ import annotations
 
 import logging
@@ -43,6 +44,7 @@ class Recorder:
         self._ready = threading.Event()
         self._worker: threading.Thread | None = None
         self._listener: Any = None
+        self._frames: Any = None  # the deps' frame buffer (start/stop), if they have one
         self._session: Session | None = None
         self._error: BaseException | None = None
         self._final: Guide | None = None
@@ -62,19 +64,33 @@ class Recorder:
         if not self._ready.wait(READY_TIMEOUT_S) or self._error is not None:
             self._shutdown_worker()
             raise RecorderError(f"Couldn't prepare screen capture: {self._error or 'timed out'}")
-        self._listener = self._listener_factory(self._enqueue)
-        if not self._listener.start():
-            self._shutdown_worker()
+        self._start_frames()
+        try:
+            self._listener = self._listener_factory(self._enqueue)
+            listening = self._listener.start()
+        except BaseException:
+            self._abandon_start()
+            raise
+        if not listening:
+            self._abandon_start()
             raise RecorderError("Windows didn't let Record Steps listen for mouse clicks.")
+
+    def _abandon_start(self) -> None:
+        """Recording didn't start: nothing may keep capturing."""
+        self._stop_frames()
+        self._shutdown_worker()
 
     def pause(self) -> None:
         if self._listener is not None and not self._paused:
             self._paused = True
             self._listener.stop()
+            self._stop_frames()
 
     def resume(self) -> None:
         if self._listener is not None and self._paused:
+            self._start_frames()
             if not self._listener.start():
+                self._stop_frames()
                 raise RecorderError("Windows stopped sharing mouse clicks with Record Steps.")
             self._paused = False
 
@@ -84,7 +100,8 @@ class Recorder:
             return self._final
         if self._listener is not None:
             self._listener.stop()
-        self._shutdown_worker()
+        self._shutdown_worker()  # queued clicks still find their frames
+        self._stop_frames()
         self._final = self._session.guide if self._session else self._empty_guide()
         return self._final
 
@@ -93,6 +110,20 @@ class Recorder:
         self._discarding = True
         self.stop()
         bundle.remove_bundle(self._dir)
+
+    def _start_frames(self) -> None:
+        if self._frames is not None:
+            try:
+                self._frames.start()
+            except Exception:  # steps fall back to screenshots taken after the click
+                log.exception("the frame buffer didn't start")
+
+    def _stop_frames(self) -> None:
+        if self._frames is not None:
+            try:
+                self._frames.stop()
+            except Exception:
+                log.exception("the frame buffer didn't stop")
 
     # ------------------------------------------------------------------ worker thread
     def _enqueue(self, click: RawClick) -> None:
@@ -114,6 +145,7 @@ class Recorder:
         deps = None
         try:
             deps = self._deps_factory()
+            self._frames = getattr(deps, "frame_buffer", None)
             guide = self._empty_guide()
             self._session = Session(guide, deps, own_pid=self._own_pid, bundle_dir=self._dir,
                                     double_click=self._double, on_accept=lambda c: self._on_click(c.x, c.y))

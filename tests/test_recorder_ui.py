@@ -103,6 +103,91 @@ def test_stop_is_safe_to_call_twice(make_recorder):
     assert rec.stop() == first
 
 
+# ---------------------------------------------------------------- frame buffer lifecycle
+
+
+class FakeFrames:
+    def __init__(self, *, fail_start=False, fail_stop=False):
+        self.events = []
+        self.fail_start = fail_start
+        self.fail_stop = fail_stop
+
+    def start(self):
+        self.events.append("start")
+        if self.fail_start:
+            raise OSError("no desktop duplication here")
+
+    def stop(self):
+        self.events.append("stop")
+        if self.fail_stop:
+            raise OSError("stuck")
+
+
+@pytest.fixture
+def buffered_recorder(qapp, tmp_path):
+    FakeListener.instances.clear()
+
+    def build(frames, ok=True):
+        class BufferedDeps(FakeDeps):
+            frame_buffer = frames
+
+        root = bundle.new_bundle_dir(tmp_path, stamp="buf")
+        return Recorder(root, on_change=lambda g: None, on_click=lambda x, y: None,
+                        deps_factory=lambda: BufferedDeps(qapp, chain=save_button()),
+                        listener_factory=lambda cb: FakeListener(cb, ok=ok), own_pid=1)
+
+    return build
+
+
+def test_the_frame_buffer_runs_only_while_recording(buffered_recorder):
+    frames = FakeFrames()
+    rec = buffered_recorder(frames)
+    rec.start()
+    assert frames.events == ["start"]
+    rec.pause()
+    assert frames.events == ["start", "stop"]
+    rec.resume()
+    assert frames.events[-1] == "start"
+    FakeListener.instances[-1].press()
+    assert len(rec.stop().steps) == 1
+    assert frames.events[-1] == "stop"
+
+
+def test_discard_stops_the_frame_buffer(buffered_recorder):
+    frames = FakeFrames()
+    rec = buffered_recorder(frames)
+    rec.start()
+    rec.discard()
+    assert frames.events[-1] == "stop"
+
+
+def test_a_frame_buffer_that_cannot_start_still_records(buffered_recorder):
+    rec = buffered_recorder(FakeFrames(fail_start=True, fail_stop=True))
+    rec.start()
+    FakeListener.instances[-1].press()
+    assert len(rec.stop().steps) == 1  # screenshots fall back to grabs taken after the click
+
+
+def test_no_mouse_listener_means_no_frame_buffer(buffered_recorder):
+    frames = FakeFrames()
+    rec = buffered_recorder(frames, ok=False)
+    with pytest.raises(RecorderError):
+        rec.start()
+    assert frames.events == ["start", "stop"]
+
+
+def test_a_failed_resume_leaves_the_frame_buffer_stopped(buffered_recorder):
+    frames = FakeFrames()
+    rec = buffered_recorder(frames)
+    rec.start()
+    rec.pause()
+    FakeListener.instances[-1].ok = False
+    with pytest.raises(RecorderError):
+        rec.resume()
+    assert frames.events[-1] == "stop"
+    rec.stop()
+
+
 # ---------------------------------------------------------------- recording pill
 
 
@@ -284,3 +369,28 @@ def wait_for_events(predicate, qapp, timeout=5.0):
             return True
         time.sleep(0.01)
     return False
+
+
+@pytest.mark.parametrize("where", ["factory", "start"])
+def test_a_listener_that_raises_still_stops_the_frame_buffer_and_worker(qapp, tmp_path, where):
+    frames = FakeFrames()
+
+    class BufferedDeps(FakeDeps):
+        frame_buffer = frames
+
+    class Exploding(FakeListener):
+        def start(self):
+            raise OSError("RegisterRawInputDevices failed")
+
+    def listener(cb):
+        if where == "factory":
+            raise OSError("no input desktop")
+        return Exploding(cb)
+
+    rec = Recorder(bundle.new_bundle_dir(tmp_path, stamp="boom"), on_change=lambda g: None,
+                   on_click=lambda x, y: None, deps_factory=lambda: BufferedDeps(qapp, chain=save_button()),
+                   listener_factory=listener, own_pid=1)
+    with pytest.raises(OSError):
+        rec.start()
+    assert frames.events == ["start", "stop"]
+    assert not rec._worker.is_alive()

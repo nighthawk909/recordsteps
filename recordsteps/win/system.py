@@ -126,14 +126,22 @@ def _overlaps(rect: wintypes.RECT, monitor: Rect) -> bool:
 
 
 def private_window_on(monitor: Rect) -> bool:
-    """True if any visible private-browsing window overlaps the monitor, even one not clicked."""
+    """True if any visible private-browsing window overlaps the monitor, even one not clicked.
+    Our own windows are skipped: they are never private, and within one process GetWindowText
+    sends WM_GETTEXT and waits for the window's thread, which may be the GUI thread, busy
+    stopping the thread that asks."""
     found = False
+    own = _kernel32.GetCurrentProcessId()
+    pid = wintypes.DWORD()
     title = ctypes.create_unicode_buffer(TITLE_MAX)
     rect = wintypes.RECT()
 
     def visit(hwnd, _lparam):
         nonlocal found
         if not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd) or _cloaked(hwnd):
+            return True
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == own:
             return True
         _user32.GetWindowTextW(hwnd, title, TITLE_MAX)
         if is_private(title.value) and _user32.GetWindowRect(hwnd, ctypes.byref(rect)) and _overlaps(rect, monitor):
