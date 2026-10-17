@@ -22,6 +22,7 @@ dependencies = [
     "winrt-Windows.Foundation>=2.0",
     "winrt-Windows.Foundation.Collections>=2.0",
     "winrt-Windows.Globalization>=2.0",
+    "python-docx>=1.1",  # Word export (MIT)
 ]
 
 [project.optional-dependencies]

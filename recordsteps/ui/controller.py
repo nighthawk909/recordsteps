@@ -193,10 +193,13 @@ class Controller(QObject):
             self._back_to_launcher(f"{self._notice}No steps were recorded, so nothing was saved.{skipped}")
             return
         steps = len(outcome.guide.steps)
-        html = outcome.result.html
-        text = f"{self._notice}{steps} step{'' if steps == 1 else 's'} recorded. Saved {html}.{skipped}"
-        self._back_to_launcher(text, html=html, folder=folder)
-        self._open(html)
+        result = outcome.result
+        problems = "".join(f" {p}." for p in getattr(result, "problems", ()))
+        recorded = f"{steps} step{'' if steps == 1 else 's'} recorded"
+        text = f"{self._notice}{recorded}. Saved {result.html}.{problems}{skipped}"
+        self._back_to_launcher(text, html=result.html, folder=folder, word=getattr(result, "word", None),
+                               pdf=getattr(result, "pdf", None))
+        self._open(result.html)
 
     def discard(self) -> None:
         recorder, folder = self._recorder, self._dir
@@ -214,9 +217,10 @@ class Controller(QObject):
         self._back_to_launcher("Discarded the recording. Nothing was saved.")
 
     # ------------------------------------------------------------------ helpers
-    def _back_to_launcher(self, text: str, html: Path | None = None, folder: Path | None = None) -> None:
+    def _back_to_launcher(self, text: str, html: Path | None = None, folder: Path | None = None,
+                          word: Path | None = None, pdf: Path | None = None) -> None:
         self.pill.hide()
-        self.launcher.show_result(text, html=html, folder=folder)
+        self.launcher.show_result(text, html=html, folder=folder, word=word, pdf=pdf)
         self.launcher.show()
         self.launcher.raise_()
 

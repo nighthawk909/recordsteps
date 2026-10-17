@@ -25,10 +25,12 @@ class Launcher(QWidget):
         self.setWindowTitle("Record Steps")
         self.setAttribute(Qt.WA_StyledBackground)
         self.setStyleSheet(theme.launcher_style(theme.palette()))
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
         self._recordings = recordings_dir
         self._html: Path | None = None
         self._folder: Path | None = None
+        self._word: Path | None = None
+        self._pdf: Path | None = None
         self._build()
         self._wire()
         self.show_result("")
@@ -51,14 +53,16 @@ class Launcher(QWidget):
         self._result.setWordWrap(True)
         self._result.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.open_guide_button = QPushButton("Open guide")
+        self.open_word_button = QPushButton("Open Word")
+        self.open_pdf_button = QPushButton("Open PDF")
         self.open_folder_button = QPushButton("Open folder")
         self.recordings_button = QPushButton("Open recordings folder")
         self.recordings_button.setObjectName("link")
         self.recordings_button.setVisible(self._recordings is not None)
 
         actions = QHBoxLayout()
-        actions.addWidget(self.open_guide_button)
-        actions.addWidget(self.open_folder_button)
+        for button in (self.open_guide_button, self.open_word_button, self.open_pdf_button, self.open_folder_button):
+            actions.addWidget(button)
         actions.addStretch()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 20)
@@ -77,6 +81,8 @@ class Launcher(QWidget):
         shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
         shortcut.activated.connect(self.record_clicked)
         self.open_guide_button.clicked.connect(lambda: self._html and self.open_path.emit(self._html))
+        self.open_word_button.clicked.connect(lambda: self._word and self.open_path.emit(self._word))
+        self.open_pdf_button.clicked.connect(lambda: self._pdf and self.open_path.emit(self._pdf))
         self.open_folder_button.clicked.connect(lambda: self._folder and self.open_path.emit(self._folder))
         self.recordings_button.clicked.connect(lambda: self._recordings and self.open_path.emit(self._recordings))
 
@@ -91,11 +97,14 @@ class Launcher(QWidget):
     def location_text(self) -> str:
         return self._location.text()
 
-    def show_result(self, text: str, html: Path | None = None, folder: Path | None = None) -> None:
-        self._html, self._folder = html, folder
+    def show_result(self, text: str, html: Path | None = None, folder: Path | None = None,
+                    word: Path | None = None, pdf: Path | None = None) -> None:
+        self._html, self._folder, self._word, self._pdf = html, folder, word, pdf
         self._result.setText(text)
         self._result.setVisible(bool(text))
         self.open_guide_button.setVisible(html is not None)
+        self.open_word_button.setVisible(word is not None)
+        self.open_pdf_button.setVisible(pdf is not None)
         self.open_folder_button.setVisible(folder is not None)
 
     def result_text(self) -> str:

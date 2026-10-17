@@ -60,11 +60,11 @@ def save_guide(bundle_dir: Path, guide: Guide) -> Path:
     path = bundle_dir / GUIDE_FILE
     tmp = path.with_name(GUIDE_FILE + ".tmp")
     tmp.write_text(json.dumps(guide_to_dict(guide), indent=2, ensure_ascii=False), encoding="utf-8")
-    _replace(tmp, path)
+    replace_file(tmp, path)
     return path
 
 
-def _replace(src: Path, dst: Path, attempts: int = REPLACE_ATTEMPTS) -> None:
+def replace_file(src: Path, dst: Path, attempts: int = REPLACE_ATTEMPTS) -> None:
     """os.replace, retried briefly: antivirus and the search indexer often hold a file that was
     just written for a few milliseconds, and Windows refuses to swap it until they let go."""
     for attempt in range(attempts):

@@ -9,9 +9,10 @@ you clicked, and a title written for you:
 > 3. Click the **Email** field
 > 4. Open the **Advanced** tab
 
-Press **Stop & build** and you get `guide.html` (one file, screenshots inside), `guide.md`
-with images, and the raw `guide.json` that every future export (Word, PDF, click-through
-demo, video) will be built from.
+Press **Stop & build** and you get `guide.html` (one file, screenshots inside), `guide.docx`
+(editable Word, built on named styles), `guide.pdf` (searchable, a step never splits across
+pages), `guide.md` with images, and the raw `guide.json` that every future export
+(click-through demo, video) will be built from.
 
 This is the Phase 0 prototype from the research blueprint. Its job is to answer one question
 before months go into an editor: **are the step titles Windows gives us good enough on real
@@ -58,8 +59,12 @@ python -m recordsteps export "C:\Users\you\Documents\Record Steps\2026-10-17 092
 python -m recordsteps stats
 ```
 
-`export` rebuilds the HTML, Markdown and review sheet for a recording (after you edit titles
-in guide.json, for example). `stats` prints the Phase 0 numbers across all recordings.
+`export` rebuilds the HTML, Word, PDF, Markdown and review sheet for a recording (after you
+edit titles in guide.json, for example). Add `--word-template brand.docx` to build the Word
+file on your own template: its Normal, Title and heading styles (fonts, colors) carry
+through, and Record Steps adds two styles of its own, **Step Title** and **Step Note**, that
+you can restyle once in Word's Styles pane. `stats` prints the Phase 0 numbers across all
+recordings.
 
 ## How it works
 
@@ -106,8 +111,10 @@ dedicated-thread-plus-message-loop pattern and the test layout.
   guide.json            the guide; rewritten atomically after every step
   images/step-001.png   full-monitor screenshots, never modified
   export/guide.html     single file, screenshots embedded, ring drawn with CSS
+  export/guide.docx     Word: Step Title / Step Note styles, alt text, page numbers
+  export/guide.pdf      Letter, searchable text, two steps a page, "Page N of M"
   export/guide.md       numbered list
-  export/images/        cropped, annotated screenshots for the Markdown
+  export/images/        cropped, annotated screenshots (used by Markdown, Word and PDF)
   review.csv            one row per step for the Phase 0 review
 ```
 
@@ -172,7 +179,7 @@ Known limits:
 python -m pytest
 ```
 
-242 tests, 96% line coverage. They include real Windows checks that need no input: screen
+275 tests, 96% line coverage. They include real Windows checks that need no input: screen
 capture, UI Automation, Windows OCR, the private-window scan, and raw-input parsing.
 
 ```bash
@@ -190,6 +197,12 @@ issues. Everything rated high or medium was fixed with a regression test
 text-field handling, the wider private-window check, formula-safe `review.csv`, failure
 reporting, and COM/listener cleanup. Still open, by design for Phase 0: unsigned builds, no
 event-log entries, unpinned dependencies, auto-pause on lock.
+
+The Word and PDF exports had their own code review. Fixed with tests: a PDF that couldn't be
+written no longer reports success (it's written to a temporary file and swapped in), a
+company template keeps its own footer and gets any built-in styles it lacks, step text uses
+character styles instead of direct formatting, screenshots load one at a time, and a file
+left open in Word or a PDF viewer gets a plain "close it and export again" message.
 
 ## License
 
