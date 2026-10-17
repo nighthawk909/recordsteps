@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an improvement or a new export
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you'd like it to work. Mockups welcome (no private data).
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Recording (capture, titles)
+        - Editing a guide
+        - Exports (HTML, Word, PDF, Markdown)
+        - Video
+        - Click-through demo
+        - Privacy and redaction
+        - Install, updates, IT deployment
+        - Other
