@@ -1,0 +1,44 @@
+name: Bug report
+description: Something recorded, titled or exported wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please don't attach recordings or screenshots that show private or work data.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: App you were recording
+      description: e.g. Excel, File Explorer, Edge, a Remote Desktop session
+  - type: textarea
+    id: step
+    attributes:
+      label: The step from guide.json (optional)
+      description: Paste the step's "element", "title" and "timing" fields. Remove anything private.
+      render: json
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `python -m recordsteps --version`
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and display scaling
+      description: e.g. Windows 11 24H2, 3440x1440 at 100%
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (optional)
+      description: The relevant lines from %LOCALAPPDATA%\Record Steps\recordsteps.log
+      render: text
